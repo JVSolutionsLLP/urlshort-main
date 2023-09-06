@@ -1,107 +1,110 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const qrcode = require('qrcode');
-const { encode } = require('base62');
-const http = require('http');
-const socketIo = require('socket.io');
-const fs = require('fs');
+const express = require("express");
+const bodyParser = require("body-parser");
+const qrcode = require("qrcode");
+const { encode } = require("base62");
+const http = require("http");
+const socketIo = require("socket.io");
+const fs = require("fs");
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use(express.static('public'));
+app.use(express.static("public"));
 
 const urlDatabase = {};
 let idCounter = 1;
 
 // Function to generate a 5-letter encoded short URL
 function generateShortUrl() {
-    return encode(idCounter++, { characters: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' }).slice(0, 5);
+  return encode(idCounter++, {
+    characters:
+      "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+  }).slice(0, 5);
 }
 
 // User tracking by IP address and daily URL count
 const userTracking = {};
 
 // Serve the dynamic dashboard
-app.get('/dashboard', (req, res) => {
-    // Read the dashboard.html file
-    fs.readFile('public/dashboard.html', 'utf8', (err, data) => {
-        if (err) {
-            console.error(err);
-            res.status(500).send('Error reading dashboard.html');
-        } else {
-            res.send(data);
-        }
-    });
+app.get("/dashboard", (req, res) => {
+  // Read the dashboard.html file
+  fs.readFile("public/dashboard.html", "utf8", (err, data) => {
+    if (err) {
+      console.error(err);
+      res.status(500).send("Error reading dashboard.html");
+    } else {
+      res.send(data);
+    }
+  });
 });
 
-
-
-
 // Create Short URL with Custom Short Link and Timestamp
-app.post('/api/shorten', async (req, res) => {
-    const { originalUrl, customShortUrl } = req.body;
-    const userIp = req.ip;
+app.post("/api/shorten", async (req, res) => {
+  const { originalUrl, customShortUrl } = req.body;
+  const userIp = req.ip;
 
-    // Check if the user has reached the daily limit (5 URLs)
-    if (!userTracking[userIp]) {
-        userTracking[userIp] = [];
+  // Check if the user has reached the daily limit (5 URLs)
+  if (!userTracking[userIp]) {
+    userTracking[userIp] = [];
+  }
+
+  if (userTracking[userIp].length >= 5) {
+    return res
+      .status(400)
+      .json({
+        error: "Daily limit exceeded. You can only create 5 URLs per day.",
+      });
+  }
+
+  let shortUrl;
+
+  if (customShortUrl) {
+    // Check if custom short URL already exists
+    if (urlDatabase.hasOwnProperty(customShortUrl)) {
+      return res.status(400).json({ error: "Custom short URL already in use" });
     }
+    shortUrl = customShortUrl;
+  } else {
+    // Generate a new 5-letter short URL using base62 encoding
+    shortUrl = generateShortUrl();
+  }
 
-    if (userTracking[userIp].length >= 5) {
-        return res.status(400).json({ error: 'Daily limit exceeded. You can only create 5 URLs per day.' });
-    }
+  const urlData = {
+    originalUrl,
+    createdAt: new Date(),
+    usageCount: 0,
+    createdBy: userIp, // Track the user who created the URL
+  };
 
-    let shortUrl;
+  urlDatabase[shortUrl] = urlData;
+  userTracking[userIp].push(shortUrl); // Track URL creation for the user
 
-    if (customShortUrl) {
-        // Check if custom short URL already exists
-        if (urlDatabase.hasOwnProperty(customShortUrl)) {
-            return res.status(400).json({ error: 'Custom short URL already in use' });
-        }
-        shortUrl = customShortUrl;
-    } else {
-        // Generate a new 5-letter short URL using base62 encoding
-        shortUrl = generateShortUrl();
-    }
+  // Emit a 'urlCreated' event with the new URL data
+  io.emit("urlCreated", urlData);
 
-    const urlData = {
-        originalUrl,
-        createdAt: new Date(),
-        usageCount: 0,
-        createdBy: userIp, // Track the user who created the URL
-    };
-
-    urlDatabase[shortUrl] = urlData;
-    userTracking[userIp].push(shortUrl); // Track URL creation for the user
-
-    // Emit a 'urlCreated' event with the new URL data
-    io.emit('urlCreated', urlData);
-
-    res.json({
-        originalUrl,
-        shortenedUrl: `https://urlshort-main.vercel.app/${shortUrl}`,
-        customShortUrl: customShortUrl || 'None',
-    });
+  res.json({
+    originalUrl,
+    shortenedUrl: `https://urlshort-main-bmclsyaps-jvsolutionsllp.vercel.app/${shortUrl}`,
+    customShortUrl: customShortUrl || "None",
+  });
 });
 
 // Resolve Short URL
-app.get('/:shortUrl', async (req, res) => {
-    const { shortUrl } = req.params;
+app.get("/:shortUrl", async (req, res) => {
+  const { shortUrl } = req.params;
 
-    // Check if shortUrl exists in your database
-    if (urlDatabase.hasOwnProperty(shortUrl)) {
-        const { originalUrl } = urlDatabase[shortUrl];
+  // Check if shortUrl exists in your database
+  if (urlDatabase.hasOwnProperty(shortUrl)) {
+    const { originalUrl } = urlDatabase[shortUrl];
 
-        urlDatabase[shortUrl].usageCount++; // Update usage count
-        return res.redirect(originalUrl); // Redirect to the original URL
-    }
+    urlDatabase[shortUrl].usageCount++; // Update usage count
+    return res.redirect(originalUrl); // Redirect to the original URL
+  }
 
-    // If shortUrl is not found, return a "Not Found" error
-    return res.status(404).send(`<!DOCTYPE html>
+  // If shortUrl is not found, return a "Not Found" error
+  return res.status(404).send(`<!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
@@ -148,33 +151,31 @@ app.get('/:shortUrl', async (req, res) => {
         <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
     </body>
     </html>`);
-    });
-
-
+});
 
 // Route to handle QR code generation
-app.get('/:shortUrl/qrcode', async (req, res) => {
-    const { shortUrl } = req.params;
+app.get("/:shortUrl/qrcode", async (req, res) => {
+  const { shortUrl } = req.params;
 
-    if (shortUrl === 'None') {
-        // Handle the case where the custom short URL is 'None'
-        return res.status(404).se({ error: 'Short URL not found' });
+  if (shortUrl === "None") {
+    // Handle the case where the custom short URL is 'None'
+    return res.status(404).se({ error: "Short URL not found" });
+  }
+
+  if (urlDatabase.hasOwnProperty(shortUrl)) {
+    const shortenedUrl = `https://urlshort-main-bmclsyaps-jvsolutionsllp.vercel.app/${shortUrl}`;
+
+    // Generate QR code for the shortened URL
+    try {
+      const qrCodeData = await qrcode.toDataURL(shortenedUrl);
+      res.type("png"); // Set the response content type to PNG image
+      res.send(Buffer.from(qrCodeData.split(",")[1], "base64")); // Send the QR code image data
+    } catch (error) {
+      console.error("QR code generation error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
-
-    if (urlDatabase.hasOwnProperty(shortUrl)) {
-        const shortenedUrl = `https://urlshort-main.vercel.app/${shortUrl}`;
-
-        // Generate QR code for the shortened URL
-        try {
-            const qrCodeData = await qrcode.toDataURL(shortenedUrl);
-            res.type('png'); // Set the response content type to PNG image
-            res.send(Buffer.from(qrCodeData.split(',')[1], 'base64')); // Send the QR code image data
-        } catch (error) {
-            console.error('QR code generation error:', error);
-            res.status(500).json({ error: 'Internal server error' });
-        }
-    } else {
-        res.status(404).send(`
+  } else {
+    res.status(404).send(`
         <!DOCTYPE html>
         <html lang="en">
         <head>
@@ -233,36 +234,35 @@ app.get('/:shortUrl/qrcode', async (req, res) => {
         </body>
         </html>
     `);
-
-    }
+  }
 });
 
 // Get URLs created by the user
-app.get('/api/urls/user/:userIp', (req, res) => {
-    const { userIp } = req.params;
-    const userUrls = Object.keys(urlDatabase)
-        .filter(shortUrl => urlDatabase[shortUrl].createdBy === userIp)
-        .map(shortUrl => ({
-            shortUrl,
-            originalUrl: urlDatabase[shortUrl].originalUrl,
-            usageCount: urlDatabase[shortUrl].usageCount,
-        }));
-    res.json(userUrls);
+app.get("/api/urls/user/:userIp", (req, res) => {
+  const { userIp } = req.params;
+  const userUrls = Object.keys(urlDatabase)
+    .filter((shortUrl) => urlDatabase[shortUrl].createdBy === userIp)
+    .map((shortUrl) => ({
+      shortUrl,
+      originalUrl: urlDatabase[shortUrl].originalUrl,
+      usageCount: urlDatabase[shortUrl].usageCount,
+    }));
+  res.json(userUrls);
 });
 
 setInterval(() => {
-    const analyticsData = {
-        totalUrls: Object.keys(urlDatabase).length,
-        usageCounts: Object.values(urlDatabase).map((url) => url.usageCount),
-    };
-    io.emit('realtimeData', analyticsData);
+  const analyticsData = {
+    totalUrls: Object.keys(urlDatabase).length,
+    usageCounts: Object.values(urlDatabase).map((url) => url.usageCount),
+  };
+  io.emit("realtimeData", analyticsData);
 }, 5000); // Emit data every 5 seconds
 
-app.get('/api/urls/user/:userIp', (req, res) => {
+app.get("/api/urls/user/:userIp", (req, res) => {
   const { userIp } = req.params;
   const userUrls = Object.keys(urlDatabase)
-    .filter(shortUrl => urlDatabase[shortUrl].createdBy === userIp)
-    .map(shortUrl => ({
+    .filter((shortUrl) => urlDatabase[shortUrl].createdBy === userIp)
+    .map((shortUrl) => ({
       shortUrl,
       originalUrl: urlDatabase[shortUrl].originalUrl,
       usageCount: urlDatabase[shortUrl].usageCount,
@@ -278,22 +278,21 @@ app.use((req, res, next) => {
 
 // Socket.io event listeners can be added here
 // Fetch and send the URL list data
-app.get('/api/urllist-data', (req, res) => {
-    const urlData = Object.keys(urlDatabase).map((shortUrl) => {
-        const { originalUrl, createdAt } = urlDatabase[shortUrl];
-        return {
-            shortUrl, // Include the short URL in the response
-            originalUrl,
-            createdAt,
-        };
-    });
+app.get("/api/urllist-data", (req, res) => {
+  const urlData = Object.keys(urlDatabase).map((shortUrl) => {
+    const { originalUrl, createdAt } = urlDatabase[shortUrl];
+    return {
+      shortUrl, // Include the short URL in the response
+      originalUrl,
+      createdAt,
+    };
+  });
 
-    // Send the URL list data as JSON
-    res.json(urlData);
+  // Send the URL list data as JSON
+  res.json(urlData);
 });
-
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
