@@ -83,7 +83,7 @@ app.post('/api/shorten', async (req, res) => {
 
     res.json({
         originalUrl,
-        shortenedUrl: `http://localhost:3000/${shortUrl}`,
+        shortenedUrl: `https://urlshort-main.vercel.app/${shortUrl}`,
         customShortUrl: customShortUrl || 'None',
     });
 });
@@ -162,7 +162,7 @@ app.get('/:shortUrl/qrcode', async (req, res) => {
     }
 
     if (urlDatabase.hasOwnProperty(shortUrl)) {
-        const shortenedUrl = `http://localhost:3000/${shortUrl}`;
+        const shortenedUrl = `https://urlshort-main.vercel.app/${shortUrl}`;
 
         // Generate QR code for the shortened URL
         try {
